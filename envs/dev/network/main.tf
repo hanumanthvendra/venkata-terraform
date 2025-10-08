@@ -1,13 +1,6 @@
 terraform {
   required_version = ">= 1.5.0"
-  backend "s3" {
-    bucket         = "terraform-backend-venkata"
-    key            = "dev/network/terraform.tfstate"
-    region         = "ap-south-1"
-    encrypt        = true
-    kms_key_id     = "alias/terraform-backend"
-    dynamodb_table = "terraform-backend-venkata-locks"
-  }
+  backend "s3" {}
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -41,3 +34,29 @@ module "vpc" {
   cluster_name = var.cluster_name
   tags         = var.tags
 }
+
+# EKS Auto Mode subnet tagging for ALB discovery
+locals {
+  public_subnets  = module.vpc.public_subnet_ids
+  private_subnets = module.vpc.private_subnet_ids
+  all_subnets     = concat(local.public_subnets, local.private_subnets)
+  cluster_name    = var.cluster_name
+}
+
+# Public subnets: discoverable for internet-facing ALBs
+resource "aws_ec2_tag" "public_elb_role" {
+  for_each   = toset(local.public_subnets)
+  resource_id = each.value
+  key         = "kubernetes.io/role/elb"
+  value       = "1"
+}
+
+# Private subnets: discoverable for internal ALBs
+resource "aws_ec2_tag" "private_elb_role" {
+  for_each   = toset(local.private_subnets)
+  resource_id = each.value
+  key         = "kubernetes.io/role/internal-elb"
+  value       = "1"
+}
+
+

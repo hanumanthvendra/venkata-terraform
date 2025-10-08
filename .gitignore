@@ -1,5 +1,6 @@
 # Terraform state files
 *.tfstate
+*.tfstate.*
 *.tfstate.backup
 
 # Crash log files
@@ -7,6 +8,7 @@ crash.log
 
 # Exclude .terraform directories
 .terraform/
+.terraform.lock.hcl
 
 # Override files
 override.tf
@@ -33,3 +35,12 @@ terraform.rc
 .idea/
 *.swp
 *.swo
+
+# Ignore Medium documentation files (except README.md)
+README-medium.md
+*-medium.md
+TODO.md
+*-TODO.md
+
+# Keep README.md files
+!README.md
