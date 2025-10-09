@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ebs-csi-test-app
+  namespace: default
+  labels:
+    app: ebs-csi-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ebs-csi-test
+  template:
+    metadata:
+      labels:
+        app: ebs-csi-test
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: ebs-storage
+          mountPath: /usr/share/nginx/html
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "<h1>EBS CSI Driver Test</h1>" > /usr/share/nginx/html/index.html
+          echo "<p>Testing persistent storage with EBS CSI Driver</p>" >> /usr/share/nginx/html/index.html
+          echo "<p>Pod: $(hostname)</p>" >> /usr/share/nginx/html/index.html
+          echo "<p>Timestamp: $(date)</p>" >> /usr/share/nginx/html/index.html
+          echo "<p>Storage mounted at: /usr/share/nginx/html</p>" >> /usr/share/nginx/html/index.html
+          echo "<p>Files in mount:</p><pre>$(ls -la /usr/share/nginx/html/)</pre>" >> /usr/share/nginx/html/index.html
+          nginx -g 'daemon off;'
+      volumes:
+      - name: ebs-storage
+        persistentVolumeClaim:
+          claimName: ebs-test-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ebs-test-pvc
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ebs-csi-driver
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ebs-csi-driver
+provisioner: ebs.csi.eks.amazonaws.com
+parameters:
+  type: gp3
+  encrypted: "true"
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ebs-csi-test-service
+  namespace: default
+  labels:
+    app: ebs-csi-test
+spec:
+  selector:
+    app: ebs-csi-test
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+  type: ClusterIP

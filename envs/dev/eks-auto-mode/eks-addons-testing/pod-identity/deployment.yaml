@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pod-identity-test-app
+  namespace: default
+  labels:
+    app: pod-identity-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-identity-test
+  template:
+    metadata:
+      labels:
+        app: pod-identity-test
+    spec:
+      serviceAccountName: secrets-sa
+      containers:
+      - name: test-container
+        image: amazonlinux:2023
+        ports:
+        - containerPort: 80
+        env:
+        - name: AWS_DEFAULT_REGION
+          value: ap-south-1
+        command:
+        - /bin/bash
+        - -c
+        - |
+          dnf install -y awscli-2 nginx
+          mkdir -p /usr/share/nginx/html
+
+          # Generate test page
+          echo "<h1>EKS Pod Identity Test</h1>" > /usr/share/nginx/html/index.html
+          echo "<p>Testing Pod Identity functionality</p>" >> /usr/share/nginx/html/index.html
+          echo "<p>Pod: $(hostname)</p>" >> /usr/share/nginx/html/index.html
+          echo "<p>Timestamp: $(date)</p>" >> /usr/share/nginx/html/index.html
+          echo "<p>Service Account: $(cat /var/run/secrets/kubernetes.io/serviceaccount/token | head -c 50)...(truncated)</p>" >> /usr/share/nginx/html/index.html
+
+          # Test AWS CLI with Pod Identity
+          echo "<h2>AWS STS Get-Caller-Identity Test</h2>" >> /usr/share/nginx/html/index.html
+          if aws sts get-caller-identity > /tmp/aws_test.json 2>&1; then
+            echo "<p style='color: green;'>✅ AWS CLI test successful!</p>" >> /usr/share/nginx/html/index.html
+            echo "<pre>$(cat /tmp/aws_test.json)</pre>" >> /usr/share/nginx/html/index.html
+          else
+            echo "<p style='color: red;'>❌ AWS CLI test failed</p>" >> /usr/share/nginx/html/index.html
+            echo "<pre>$(cat /tmp/aws_test.json 2>/dev/null || echo 'No output')</pre>" >> /usr/share/nginx/html/index.html
+          fi
+
+          echo "<h2>Pod Identity Information</h2>" >> /usr/share/nginx/html/index.html
+          echo "<p>AWS CLI Version: $(aws --version)</p>" >> /usr/share/nginx/html/index.html
+          echo "<p>Region: $AWS_DEFAULT_REGION</p>" >> /usr/share/nginx/html/index.html
+
+          # Start nginx
+          nginx -g 'daemon off;'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pod-identity-test-service
+  namespace: default
+  labels:
+    app: pod-identity-test
+spec:
+  selector:
+    app: pod-identity-test
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+  type: ClusterIP
