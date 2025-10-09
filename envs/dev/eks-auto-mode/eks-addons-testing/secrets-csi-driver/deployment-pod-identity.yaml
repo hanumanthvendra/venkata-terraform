@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-pod-identity-deployment
+  labels:
+    app: nginx-pod-identity
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-pod-identity
+  template:
+    metadata:
+      labels:
+        app: nginx-pod-identity
+    spec:
+      serviceAccountName: secrets-sa
+      volumes:
+      - name: secrets-store-inline
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: "aws-secrets-test-pod-identity"
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: secrets-store-inline
+          mountPath: "/mnt/secrets-store"
+          readOnly: true
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "<h1>Secrets CSI Driver Test</h1>" > /usr/share/nginx/html/index.html
+          echo "<p>Testing secrets access with AWS Secrets Manager CSI Driver</p>" >> /usr/share/nginx/html/index.html
+          echo "<p>Pod: $(hostname)</p>" >> /usr/share/nginx/html/index.html
+          echo "<p>Timestamp: $(date)</p>" >> /usr/share/nginx/html/index.html
+          echo "<p>Secrets mounted at: /mnt/secrets-store</p>" >> /usr/share/nginx/html/index.html
+          echo "<p>Secret ARN: arn:aws:secretsmanager:ap-south-1:817928572948:secret:test-secret-2qVI2z</p>" >> /usr/share/nginx/html/index.html
+          if [ -f "/mnt/secrets-store/test-secret" ]; then
+            echo "<p style='color: green;'>✅ Secret Content:</p>" >> /usr/share/nginx/html/index.html
+            echo "<pre>$(cat /mnt/secrets-store/test-secret)</pre>" >> /usr/share/nginx/html/index.html
+          else
+            echo "<p style='color: red;'>❌ Secret file not found</p>" >> /usr/share/nginx/html/index.html
+          fi
+          echo "<p>Files in secrets mount:</p><pre>$(ls -la /mnt/secrets-store/ 2>/dev/null || echo 'No files found')</pre>" >> /usr/share/nginx/html/index.html
+          nginx -g 'daemon off;'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-pod-identity-deployment
+  labels:
+    app: nginx-pod-identity
+spec:
+  selector:
+    app: nginx-pod-identity
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 80
+  type: ClusterIP

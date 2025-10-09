@@ -21,6 +21,30 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
+  # IRSA Secrets CSI Driver Test
+  - host: nginx-irsa-secrets.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nginx-irsa-deployment
+            port:
+              number: 80
+
+  # Pod Identity Secrets CSI Driver Test
+  - host: secrets-csi-test.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: secrets-csi-test-service
+            port:
+              number: 80
+
   # EBS CSI Driver Test
   - host: ebs-csi.example.com
     http:
@@ -32,19 +56,7 @@ spec:
             name: ebs-csi-test-service
             port:
               number: 80
-  
-  # Secrets CSI Driver Test
-  - host: secrets-csi.example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: secrets-csi-test-service
-            port:
-              number: 80
-  
+
   # Pod Identity Test
   - host: pod-identity.example.com
     http:

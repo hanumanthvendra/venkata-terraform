@@ -1,83 +1,48 @@
-apiVersion: secrets-store.csi.x-k8s.io/v1
-kind: SecretProviderClass
-metadata:
-  name: aws-secrets-test
-  namespace: default
-spec:
-  provider: aws
-  parameters:
-    usePodIdentity: "true"
-    region: "ap-south-1"
-    objects: |
-      - objectName: "arn:aws:secretsmanager:ap-south-1:817928572948:secret:test-secret-2qVI2z"
-        objectType: "secretsmanager"
-        objectAlias: "test-secret"
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: secrets-csi-test-app
-  namespace: default
+  name: nginx-irsa-deployment
   labels:
-    app: secrets-csi-test
+    app: nginx-irsa
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
-      app: secrets-csi-test
+      app: nginx-irsa
   template:
     metadata:
       labels:
-        app: secrets-csi-test
+        app: nginx-irsa
     spec:
-      serviceAccountName: secrets-sa
-      containers:
-      - name: nginx
-        image: nginx:alpine
-        ports:
-        - containerPort: 80
-        volumeMounts:
-        - name: secrets-store
-          mountPath: "/mnt/secrets"
-          readOnly: true
-        command:
-        - /bin/sh
-        - -c
-        - |
-          echo "<h1>Secrets CSI Driver Test</h1>" > /usr/share/nginx/html/index.html
-          echo "<p>Testing secrets access with AWS Secrets Manager CSI Driver</p>" >> /usr/share/nginx/html/index.html
-          echo "<p>Pod: $(hostname)</p>" >> /usr/share/nginx/html/index.html
-          echo "<p>Timestamp: $(date)</p>" >> /usr/share/nginx/html/index.html
-          echo "<p>Secrets mounted at: /mnt/secrets</p>" >> /usr/share/nginx/html/index.html
-          echo "<p>Secret ARN: arn:aws:secretsmanager:ap-south-1:817928572948:secret:test-secret-2qVI2z</p>" >> /usr/share/nginx/html/index.html
-          if [ -f "/mnt/secrets/test-secret" ]; then
-            echo "<p style='color: green;'>✅ Secret Content:</p>" >> /usr/share/nginx/html/index.html
-            echo "<pre>$(cat /mnt/secrets/test-secret)</pre>" >> /usr/share/nginx/html/index.html
-          else
-            echo "<p style='color: red;'>❌ Secret file not found</p>" >> /usr/share/nginx/html/index.html
-          fi
-          echo "<p>Files in secrets mount:</p><pre>$(ls -la /mnt/secrets/ 2>/dev/null || echo 'No files found')</pre>" >> /usr/share/nginx/html/index.html
-          nginx -g 'daemon off;'
+      serviceAccountName: nginx-irsa-deployment-sa
       volumes:
-      - name: secrets-store
+      - name: secrets-store-inline
         csi:
           driver: secrets-store.csi.k8s.io
           readOnly: true
           volumeAttributes:
-            secretProviderClass: "aws-secrets-test"
+            secretProviderClass: "nginx-irsa-deployment-aws-secrets"
+      containers:
+      - name: nginx-irsa-deployment
+        image: nginx
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: secrets-store-inline
+          mountPath: "/mnt/secrets-store"
+          readOnly: true
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: secrets-csi-test-service
-  namespace: default
+  name: nginx-irsa-deployment
   labels:
-    app: secrets-csi-test
+    app: nginx-irsa
 spec:
   selector:
-    app: secrets-csi-test
+    app: nginx-irsa
   ports:
   - port: 80
-    targetPort: 80
     protocol: TCP
+    targetPort: 80
   type: ClusterIP

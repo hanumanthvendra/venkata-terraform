@@ -136,14 +136,24 @@ output "ebs_csi_driver_role_name" {
 # Secrets CSI Driver Outputs
 ################################################################################
 
-output "secrets_csi_driver_role_arn" {
-  description = "ARN of the IAM role for Secrets Store CSI Driver"
-  value       = module.secrets_csi_driver.iam_role_arn
+output "secrets_csi_driver_pod_identity_role_arn" {
+  description = "ARN of the Pod Identity IAM role for Secrets Store CSI Driver"
+  value       = module.secrets_csi_driver.pod_identity_iam_role_arn
 }
 
-output "secrets_csi_driver_role_name" {
-  description = "Name of the IAM role for Secrets Store CSI Driver"
-  value       = module.secrets_csi_driver.iam_role_name
+output "secrets_csi_driver_pod_identity_role_name" {
+  description = "Name of the Pod Identity IAM role for Secrets Store CSI Driver"
+  value       = module.secrets_csi_driver.pod_identity_iam_role_name
+}
+
+output "secrets_csi_driver_irsa_role_arn" {
+  description = "ARN of the IRSA IAM role for Secrets Store CSI Driver"
+  value       = module.secrets_csi_driver.irsa_iam_role_arn
+}
+
+output "secrets_csi_driver_irsa_role_name" {
+  description = "Name of the IRSA IAM role for Secrets Store CSI Driver"
+  value       = module.secrets_csi_driver.irsa_iam_role_name
 }
 
 output "secrets_service_account_name" {

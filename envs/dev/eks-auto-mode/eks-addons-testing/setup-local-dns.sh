@@ -5,19 +5,33 @@
 
 set -e
 
-ALB_ENDPOINT="k8s-default-eksaddon-e290e07746-386402444.ap-south-1.elb.amazonaws.com"
-ALB_IP="65.2.19.156"
-
 echo "========================================="
 echo "EKS Addons Testing - Local DNS Setup"
 echo "========================================="
 echo ""
-echo "ALB Endpoint: $ALB_ENDPOINT"
-echo "ALB IP: $ALB_IP"
+
+# Get ALB DNS name dynamically
+echo "Getting ALB DNS name..."
+ALB_DNS=$(kubectl get ingress eks-addons-unified-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+
+if [ -z "$ALB_DNS" ]; then
+    echo "❌ Could not find ALB DNS name. Make sure the ingress is deployed:"
+    echo "   kubectl apply -f unified-alb-ingress.yaml"
+    exit 1
+fi
+
+echo "ALB DNS: $ALB_DNS"
 echo ""
 
+# Get ALB IP (optional, for direct IP access)
+ALB_IP=$(dig +short $ALB_DNS | head -1)
+if [ -n "$ALB_IP" ]; then
+    echo "ALB IP: $ALB_IP"
+    echo ""
+fi
+
 # Check if entries already exist
-if grep -q "ebs-csi.example.com" /etc/hosts 2>/dev/null; then
+if grep -q "example.com" /etc/hosts 2>/dev/null; then
     echo "⚠️  Entries already exist in /etc/hosts"
     echo ""
     echo "Current entries:"
@@ -29,10 +43,10 @@ if grep -q "ebs-csi.example.com" /etc/hosts 2>/dev/null; then
         echo "Skipping update."
         exit 0
     fi
-    
+
     # Remove old entries
     echo "Removing old entries..."
-    sudo sed -i.bak '/EKS Addons Testing/,+3d' /etc/hosts
+    sudo sed -i.bak '/EKS Addons Testing/,+5d' /etc/hosts
 fi
 
 # Add new entries
@@ -40,19 +54,23 @@ echo "Adding entries to /etc/hosts..."
 sudo bash -c "cat >> /etc/hosts <<EOF
 
 # EKS Addons Testing - Unified ALB
-$ALB_IP ebs-csi.example.com
-$ALB_IP secrets-csi.example.com
-$ALB_IP pod-identity.example.com
+$ALB_DNS nginx-irsa-secrets.example.com
+$ALB_DNS secrets-csi-test.example.com
+$ALB_DNS ebs-csi.example.com
+$ALB_DNS pod-identity.example.com
 EOF"
 
 echo ""
 echo "✅ Successfully added entries to /etc/hosts"
 echo ""
 echo "You can now access:"
+echo "  - http://nginx-irsa-secrets.example.com"
+echo "  - http://secrets-csi-test.example.com"
 echo "  - http://ebs-csi.example.com"
-echo "  - http://secrets-csi.example.com"
 echo "  - http://pod-identity.example.com"
 echo ""
 echo "To remove these entries later, run:"
-echo "  sudo sed -i.bak '/EKS Addons Testing/,+3d' /etc/hosts"
+echo "  sudo sed -i.bak '/EKS Addons Testing/,+5d' /etc/hosts"
 echo ""
+echo "Note: If you get SSL certificate errors, use HTTP instead of HTTPS"
+echo "      since we're using self-signed certificates for testing."

@@ -140,7 +140,12 @@ output "ebs_csi_driver_role_arn" {
   value       = module.eks_auto_mode.ebs_csi_driver_role_arn
 }
 
-output "secrets_csi_driver_role_arn" {
-  description = "ARN of the IAM role for Secrets Store CSI Driver"
-  value       = module.eks_auto_mode.secrets_csi_driver_role_arn
+output "secrets_csi_driver_pod_identity_role_arn" {
+  description = "ARN of the Pod Identity IAM role for Secrets Store CSI Driver"
+  value       = module.eks_auto_mode.secrets_csi_driver_pod_identity_role_arn
+}
+
+output "secrets_csi_driver_irsa_role_arn" {
+  description = "ARN of the IRSA IAM role for Secrets Store CSI Driver"
+  value       = module.eks_auto_mode.secrets_csi_driver_irsa_role_arn
 }
