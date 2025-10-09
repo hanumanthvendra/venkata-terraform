@@ -1,0 +1,5 @@
+# This is a backup of the original main.tf before modularization
+# Created on: 2024
+# 
+# The original file has been refactored to use modules for better organization
+# See main.tf for the new modular structure

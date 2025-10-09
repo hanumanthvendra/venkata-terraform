@@ -35,28 +35,3 @@ module "vpc" {
   tags         = var.tags
 }
 
-# EKS Auto Mode subnet tagging for ALB discovery
-locals {
-  public_subnets  = module.vpc.public_subnet_ids
-  private_subnets = module.vpc.private_subnet_ids
-  all_subnets     = concat(local.public_subnets, local.private_subnets)
-  cluster_name    = var.cluster_name
-}
-
-# Public subnets: discoverable for internet-facing ALBs
-resource "aws_ec2_tag" "public_elb_role" {
-  for_each   = toset(local.public_subnets)
-  resource_id = each.value
-  key         = "kubernetes.io/role/elb"
-  value       = "1"
-}
-
-# Private subnets: discoverable for internal ALBs
-resource "aws_ec2_tag" "private_elb_role" {
-  for_each   = toset(local.private_subnets)
-  resource_id = each.value
-  key         = "kubernetes.io/role/internal-elb"
-  value       = "1"
-}
-
-

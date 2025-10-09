@@ -1,0 +1,100 @@
+# EKS Auto Mode ALB Configuration
+# This demonstrates ALB functionality with EKS Auto Mode (no LBC needed)
+
+---
+# IngressClassParams - ALB configuration (one-time setup)
+apiVersion: eks.amazonaws.com/v1
+kind: IngressClassParams
+metadata:
+  name: alb-auto-mode
+spec:
+  scheme: internet-facing         # or "internal"
+  ipAddressType: ipv4            # Changed from dualstack to ipv4
+  # Explicit subnet specification to avoid auto-discovery conflicts
+  subnets:
+    ids:
+      - subnet-0e0a90910ddbdcb4f   # public AZ-1
+      - subnet-089c505b3bb3ef03e   # public AZ-2
+
+---
+# IngressClass definition
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: alb-auto-mode
+  annotations:
+    ingressclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: eks.amazonaws.com/alb
+  parameters:
+    apiGroup: eks.amazonaws.com
+    kind: IngressClassParams
+    name: alb-auto-mode
+
+---
+# Test application deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-alb-test
+  labels:
+    app: nginx-alb-test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-alb-test
+  template:
+    metadata:
+      labels:
+        app: nginx-alb-test
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.21
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+
+---
+# Service for the application
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-alb-test-service
+  labels:
+    app: nginx-alb-test
+spec:
+  type: ClusterIP
+  selector:
+    app: nginx-alb-test
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+
+---
+# Ingress handled by EKS Auto Mode (no LBC annotations needed)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-alb-test-ingress
+spec:
+  ingressClassName: alb-auto-mode
+  rules:
+    - host: test.example.com   # change to your domain or remove host for bare ALB test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-alb-test-service
+                port:
+                  number: 80
