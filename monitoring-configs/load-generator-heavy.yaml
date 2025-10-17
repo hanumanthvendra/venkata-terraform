@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: load-generator-heavy
+  namespace: dev
+spec:
+  containers:
+  - name: load-generator
+    image: alpine
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      apk add --no-cache curl hey &&
+      hey -n 100000 -c 10 -q 5 http://flamecraft-app-service.dev.svc.cluster.local/health
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "200Mi"
+      limits:
+        cpu: "1000m"
+        memory: "500Mi"

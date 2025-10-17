@@ -1,0 +1,25 @@
+rules:
+- metricsQuery: |
+    sum by (<<.GroupBy>>)(
+      rate(http_requests_total{<<.LabelMatchers>>}[2m])
+    )
+  name:
+    as: http_requests_per_second
+  resources:
+    overrides:
+      namespace:
+        resource: namespace
+      pod:
+        resource: pod
+  seriesQuery: http_requests_total{namespace!="",pod!=""}
+- seriesQuery: '{__name__="flask_http_request_total",namespace="dev",pod!=""}'
+  resources:
+    overrides:
+      namespace:
+        resource: namespace
+      pod:
+        resource: pod
+  name:
+    matches: ^flask_http_request_total$
+    as: http_requests_per_second
+  metricsQuery: sum(rate(flask_http_request_total{<<.LabelMatchers>>}[5m])) by (<<.GroupBy>>)

@@ -1,0 +1,140 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    meta.helm.sh/release-name: prometheus-adapter
+    meta.helm.sh/release-namespace: monitoring
+  creationTimestamp: "2025-10-17T02:51:00Z"
+  generation: 1
+  labels:
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/instance: prometheus-adapter
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: prometheus-adapter
+    app.kubernetes.io/part-of: prometheus-adapter
+    app.kubernetes.io/version: v0.12.0
+    helm.sh/chart: prometheus-adapter-5.1.0
+  name: prometheus-adapter
+  namespace: monitoring
+  resourceVersion: "13885764"
+  uid: 11b17fc5-e5ce-47c3-8ba0-d411347a260a
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: prometheus-adapter
+      app.kubernetes.io/name: prometheus-adapter
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        checksum/config: 981cd1740837f8c9240e07ddc87ef5fc288f18a8856dab0836098f83dbb2c2ba
+      creationTimestamp: null
+      labels:
+        app.kubernetes.io/component: metrics
+        app.kubernetes.io/instance: prometheus-adapter
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: prometheus-adapter
+        app.kubernetes.io/part-of: prometheus-adapter
+        app.kubernetes.io/version: v0.12.0
+        helm.sh/chart: prometheus-adapter-5.1.0
+      name: prometheus-adapter
+    spec:
+      affinity: {}
+      automountServiceAccountToken: true
+      containers:
+      - args:
+        - /adapter
+        - --secure-port=6443
+        - --cert-dir=/tmp/cert
+        - --prometheus-url=http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
+        - --metrics-relist-interval=1m
+        - --v=4
+        - --config=/etc/adapter/config.yaml
+        image: registry.k8s.io/prometheus-adapter/prometheus-adapter:v0.12.0
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /healthz
+            port: https
+            scheme: HTTPS
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5
+        name: prometheus-adapter
+        ports:
+        - containerPort: 6443
+          name: https
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /healthz
+            port: https
+            scheme: HTTPS
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5
+        resources: {}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 10001
+          seccompProfile:
+            type: RuntimeDefault
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /etc/adapter/
+          name: config
+          readOnly: true
+        - mountPath: /tmp
+          name: tmp
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        fsGroup: 10001
+      serviceAccount: prometheus-adapter
+      serviceAccountName: prometheus-adapter
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - configMap:
+          defaultMode: 420
+          name: prometheus-adapter-custom
+        name: config
+      - emptyDir: {}
+        name: tmp
+status:
+  availableReplicas: 1
+  conditions:
+  - lastTransitionTime: "2025-10-17T02:51:00Z"
+    lastUpdateTime: "2025-10-17T02:51:37Z"
+    message: ReplicaSet "prometheus-adapter-66b66f7bf8" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  - lastTransitionTime: "2025-10-17T02:56:42Z"
+    lastUpdateTime: "2025-10-17T02:56:42Z"
+    message: Deployment has minimum availability.
+    reason: MinimumReplicasAvailable
+    status: "True"
+    type: Available
+  observedGeneration: 1
+  readyReplicas: 1
+  replicas: 1
+  updatedReplicas: 1

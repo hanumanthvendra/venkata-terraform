@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flamecraft-app
+  namespace: dev
+  labels:
+    app: flamecraft-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: flamecraft-app
+  template:
+    metadata:
+      labels:
+        app: flamecraft-app
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: flamecraft-app
+          image: public.ecr.aws/e9s5a3s2/flamecraft:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5500
+          env:
+            - name: GUNICORN_WORKERS
+              valueFrom: { resourceFieldRef: { resource: limits.cpu } }
+            - name: MEM_LIMIT
+              valueFrom: { resourceFieldRef: { resource: limits.memory } }
+            - name: FLASK_ENV
+              value: production
+            - name: TMPDIR
+              value: /tmp
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: "70m"
+              memory: "70Mi"
+            limits:
+              cpu: "100m"
+              memory: "100Mi"
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10000
+            runAsGroup: 10000
+            capabilities: { drop: ["ALL"] }
+          livenessProbe:
+            httpGet: { path: /health, port: 5500 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /ready, port: 5500 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      imagePullSecrets:
+        - name: regcred
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flamecraft-app-service
+  namespace: dev
+  labels:
+    app: flamecraft-app
+spec:
+  selector:
+    app: flamecraft-app
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 5500
+  type: ClusterIP
+
