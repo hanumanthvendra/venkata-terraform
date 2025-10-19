@@ -1,0 +1,9 @@
+controller:
+  persistence:
+    enabled: true
+    existingClaim: jenkins
+  JCasC:
+    enabled: false
+  sidecars:
+    configAutoReload:
+      enabled: false

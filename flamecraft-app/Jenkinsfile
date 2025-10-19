@@ -1,0 +1,128 @@
+node('ec2-fleet') {
+  // ---- Config ----
+  def APP_DIR      = 'flamecraft-app'
+  def AWS_REGION   = 'us-east-1'                         // ECR Public auth is issued in us-east-1
+  def ECR_REGISTRY = 'public.ecr.aws'
+  def ECR_REPO     = 'public.ecr.aws/e9s5a3s2/flamecraft'
+  def IMAGE        = "flamecraft:${env.BUILD_NUMBER}"
+  def ECR_IMAGE    = "${ECR_REPO}:${env.BUILD_NUMBER}"
+
+  // Helm deployment config
+  def K8S_REGION   = 'ap-south-1'
+  def CLUSTER_NAME = 'dev-eks-auto-mode-3'
+  def NAMESPACE    = 'dev'
+  def RELEASE      = 'flamecraft-app'
+  def CHART_PATH   = 'flamecraft-app/helm'
+
+  stage('Clean Workspace') { deleteDir() }
+
+  stage('Clone Repo') {
+    sshagent(['git-ssh-key']) {
+      sh '''
+        set -euxo pipefail
+        export HOME="${HOME:-/home/jenkins}"
+        mkdir -p "$HOME/.ssh"
+        touch "$HOME/.ssh/known_hosts"
+        chmod 700 "$HOME/.ssh"
+        ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> "$HOME/.ssh/known_hosts"
+        chmod 644 "$HOME/.ssh/known_hosts"
+      '''
+      git url: 'git@github.com:hanumanthvendra/venkata-terraform.git',
+          branch: 'main',
+          credentialsId: 'git-ssh-key'
+    }
+  }
+
+  stage('Build Docker Image') {
+    dir(APP_DIR) {
+      sh """
+        set -euxo pipefail
+        test -f Dockerfile || { echo "ERROR: \$PWD/Dockerfile not found"; exit 2; }
+        echo "Building image: ${IMAGE} from \$PWD"
+        docker build -t "${IMAGE}" -f Dockerfile .
+      """
+    }
+  }
+
+  stage('Scan Image (Trivy)') {
+    sh """
+      set -euxo pipefail
+      echo "Running Trivy scan for ${IMAGE} (CRITICAL,HIGH)…"
+      docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+        aquasec/trivy:latest image --exit-code 1 --severity CRITICAL,HIGH --no-progress "${IMAGE}" || {
+          echo "Trivy found CRITICAL/HIGH vulnerabilities - failing."
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image --format table --no-progress "${IMAGE}" || true
+          exit 1
+        }
+    """
+  }
+
+  stage('Tag for ECR Public') {
+    sh """
+      set -euxo pipefail
+      echo "Tagging ${IMAGE} -> ${ECR_IMAGE}"
+      docker tag "${IMAGE}" "${ECR_IMAGE}"
+    """
+  }
+
+  stage('ECR Login & Push') {
+    // Use the correct binding for AWS Credentials type
+    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                      credentialsId: 'aws-credentials-id']]) {
+      sh """
+        set -euo pipefail
+        export AWS_DEFAULT_REGION='${AWS_REGION}'
+        export AWS_EC2_METADATA_DISABLED=true
+
+        aws --version || true
+        aws sts get-caller-identity >/dev/null
+
+        # Ensure ECR Public repo exists (no-op if already present)
+        aws ecr-public describe-repositories --region "\$AWS_DEFAULT_REGION" \
+          --repository-names flamecraft >/dev/null 2>&1 || \
+        aws ecr-public create-repository --region "\$AWS_DEFAULT_REGION" \
+          --repository-name flamecraft >/dev/null
+
+        # Non-interactive login to ECR Public
+        aws ecr-public get-login-password --region "\$AWS_DEFAULT_REGION" \
+          | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+
+        echo "Pushing ${ECR_IMAGE} ..."
+        docker push "${ECR_IMAGE}"
+      """
+    }
+  }
+
+  stage('Deploy to Dev (Helm)') {
+    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                      credentialsId: 'aws-credentials-id']]) {
+      sh """
+        set -euo pipefail
+
+        # Access cluster
+        aws eks update-kubeconfig --region '${K8S_REGION}' --name '${CLUSTER_NAME}'
+
+        # Helm upgrade/install with the new image tag
+        helm upgrade --install '${RELEASE}' '${CHART_PATH}' \
+          --namespace '${NAMESPACE}' --create-namespace \
+          --set image.repository='public.ecr.aws/e9s5a3s2/flamecraft' \
+          --set image.tag='${env.BUILD_NUMBER}' \
+          --set image.pullPolicy='IfNotPresent' \
+          --wait --atomic --timeout 5m
+
+        # Show actual image running
+        kubectl -n '${NAMESPACE}' get deploy/${RELEASE} -o=jsonpath='{.spec.template.spec.containers[0].image}'; echo
+        kubectl -n '${NAMESPACE}' rollout status deploy/${RELEASE} --timeout=300s
+      """
+    }
+  }
+
+  stage('Cleanup') {
+    sh """
+      set -euxo pipefail
+      docker rmi "${IMAGE}" || true
+      docker rmi "${ECR_IMAGE}" || true
+    """
+  }
+}

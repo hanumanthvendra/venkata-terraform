@@ -1,0 +1,20 @@
+controller:
+  persistence:
+    enabled: true
+    existingClaim: jenkins
+
+  # Turn off JCasC completely
+  JCasC:
+    enabled: false
+    defaultConfig: false
+
+  # No auto-reload sidecar
+  sidecars:
+    configAutoReload:
+      enabled: false
+
+  # IMPORTANT: blank out the env var so the plugin does NOT load any YAML
+  # (key name is `containerEnv` on the community chart)
+  containerEnv:
+    - name: CASC_JENKINS_CONFIG
+      value: ""
