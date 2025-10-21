@@ -16,7 +16,7 @@ spec:
           python /app/simple_test.py
         env:
         - name: FLAMECRAFT_SERVICE_URL
-          value: "http://flamecraft-app.dev.svc.cluster.local:5500"
+          value: "http://flamecraft-app.dev.svc.cluster.local:80"
         volumeMounts:
         - name: test-script
           mountPath: /app
