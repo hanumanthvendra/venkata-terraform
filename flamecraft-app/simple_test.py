@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""
+Simple test script for Flamecraft Flask API.
+Performs basic health and API checks, then exits.
+"""
+
+import requests
+import sys
+import os
+import time
+
+def test_endpoint(url, expected_status=200, timeout=10):
+    """Test a single endpoint and return success/failure."""
+    try:
+        response = requests.get(url, timeout=timeout)
+        if response.status_code == expected_status:
+            print(f"✓ {url} - Status: {response.status_code}")
+            return True
+        else:
+            print(f"✗ {url} - Status: {response.status_code} (expected {expected_status})")
+            return False
+    except requests.exceptions.RequestException as e:
+        print(f"✗ {url} - Error: {e}")
+        return False
+
+def main():
+    # Configuration
+    base_url = os.getenv('FLAMECRAFT_SERVICE_URL', 'http://localhost:5500')
+    base_url = base_url.rstrip('/')
+
+    print("Starting simple Flamecraft API tests...")
+    print(f"Target URL: {base_url}")
+    print("-" * 50)
+
+    tests_passed = 0
+    total_tests = 0
+
+    # Test health endpoint
+    total_tests += 1
+    if test_endpoint(f"{base_url}/health"):
+        tests_passed += 1
+
+    # Test readiness endpoint
+    total_tests += 1
+    if test_endpoint(f"{base_url}/ready"):
+        tests_passed += 1
+
+    # Test employees endpoint (GET)
+    total_tests += 1
+    if test_endpoint(f"{base_url}/employees"):
+        tests_passed += 1
+
+    print("-" * 50)
+    print(f"Tests completed: {tests_passed}/{total_tests} passed")
+
+    if tests_passed == total_tests:
+        print("✓ All tests passed!")
+        sys.exit(0)
+    else:
+        print("✗ Some tests failed!")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
