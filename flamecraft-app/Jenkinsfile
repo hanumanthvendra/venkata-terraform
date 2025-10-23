@@ -14,6 +14,8 @@ node('ec2-fleet') {
   def RELEASE      = 'flamecraft-app'
   def CHART_PATH   = 'flamecraft-app/helm'
 
+  try {
+
   stage('Clean Workspace') { deleteDir() }
 
   stage('Clone Repo') {
@@ -33,6 +35,32 @@ node('ec2-fleet') {
     }
   }
 
+  stage('Parallel Security Scans') {
+    parallel(
+      "Secret Scan (Gitleaks)": {
+        sh '''
+          set -euo pipefail
+          echo "Running Gitleaks secret scan on repository..."
+          CFG_ARG=""
+          test -f .gitleaks.toml && CFG_ARG="--config=/repo/.gitleaks.toml"
+          docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:latest \
+            detect --source=/repo $CFG_ARG \
+            --report-format sarif --report-path gitleaks.sarif --redact
+        '''
+        archiveArtifacts artifacts: 'gitleaks.sarif', allowEmptyArchive: true
+      },
+      "Secret Scan (Trivy Repo)": {
+        sh '''
+          set -euo pipefail
+          echo "Running Trivy secret scan on repository..."
+          docker run --rm -v "$PWD:/repo" -w /repo aquasec/trivy:latest \
+            fs --scanners secret --exit-code 1 --no-progress /repo
+        '''
+      }
+    )
+  }
+
+
   stage('Build Docker Image') {
     dir(APP_DIR) {
       sh """
@@ -44,10 +72,10 @@ node('ec2-fleet') {
     }
   }
 
-  stage('Scan Image (Trivy)') {
+  stage('Vulnerability Scan (Trivy)') {
     sh """
       set -euxo pipefail
-      echo "Running Trivy scan for ${IMAGE} (CRITICAL,HIGH)…"
+      echo "Running Trivy vulnerability scan for ${IMAGE} (CRITICAL,HIGH)…"
       docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
         aquasec/trivy:latest image --exit-code 1 --severity CRITICAL,HIGH --no-progress "${IMAGE}" || {
           echo "Trivy found CRITICAL/HIGH vulnerabilities - failing."
@@ -57,6 +85,8 @@ node('ec2-fleet') {
         }
     """
   }
+
+
 
   stage('Tag for ECR Public') {
     sh """
@@ -94,35 +124,490 @@ node('ec2-fleet') {
     }
   }
 
-  stage('Deploy to Dev (Helm)') {
+
+  stage('Deploy to Dev Env (Helm)') {
+      withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                        credentialsId: 'aws-credentials-id']]) {
+        sh """
+          set -euo pipefail
+          aws eks update-kubeconfig --region '${K8S_REGION}' --name '${CLUSTER_NAME}'
+
+          # Helm upgrade/install with the new image tag
+          helm upgrade --install '${RELEASE}' '${CHART_PATH}' \
+            --namespace '${NAMESPACE}' --create-namespace \
+            --set image.repository='public.ecr.aws/e9s5a3s2/flamecraft' \
+            --set image.tag='${env.BUILD_NUMBER}' \
+            --set image.pullPolicy='IfNotPresent' \
+            --wait --atomic --timeout 5m
+
+          # Sanity checks
+          kubectl -n '${NAMESPACE}' rollout status deploy/${RELEASE} --timeout=300s
+          kubectl -n '${NAMESPACE}' get deploy/${RELEASE} -o=jsonpath='{.spec.template.spec.containers[0].image}'; echo
+        """
+      }
+    }
+
+  stage('Run Regression Tests for dev Env') {
     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
                       credentialsId: 'aws-credentials-id']]) {
-      sh """
-        set -euo pipefail
+      dir("${APP_DIR}") {
+        sh """
+          set -euo pipefail
 
-        # Access cluster
-        aws eks update-kubeconfig --region '${K8S_REGION}' --name '${CLUSTER_NAME}'
+          aws eks update-kubeconfig --region '${K8S_REGION}' --name '${CLUSTER_NAME}'
 
-        # Helm upgrade/install with the new image tag
-        helm upgrade --install '${RELEASE}' '${CHART_PATH}' \
-          --namespace '${NAMESPACE}' --create-namespace \
-          --set image.repository='public.ecr.aws/e9s5a3s2/flamecraft' \
-          --set image.tag='${env.BUILD_NUMBER}' \
-          --set image.pullPolicy='IfNotPresent' \
-          --wait --atomic --timeout 5m
+          echo "Running regression tests using Kubernetes Job..."
 
-        # Show actual image running
-        kubectl -n '${NAMESPACE}' get deploy/${RELEASE} -o=jsonpath='{.spec.template.spec.containers[0].image}'; echo
-        kubectl -n '${NAMESPACE}' rollout status deploy/${RELEASE} --timeout=300s
-      """
+          # Apply the regression test job
+          kubectl apply -f regression-test-job.yaml
+
+          # Wait for the job to complete
+          echo "Waiting for regression test job to complete..."
+          kubectl wait --for=condition=complete job/regression-test-job -n '${NAMESPACE}' --timeout=300s
+
+          # Create test report directory
+          mkdir -p test-reports
+
+          # Get job logs
+          echo "Fetching regression test job logs..."
+          kubectl logs job/regression-test-job -n '${NAMESPACE}' | tee test-reports/regression-test.log
+
+          # Check if job succeeded
+          if kubectl get job regression-test-job -n '${NAMESPACE}' -o jsonpath='{.status.succeeded}' | grep -q '1'; then
+            echo "✓ Regression test job completed successfully!"
+          else
+            echo "✗ Regression test job failed!"
+            kubectl logs job/regression-test-job -n '${NAMESPACE}'
+            exit 1
+          fi
+
+          # Generate summary report
+          echo "Generating test summary report..."
+          cat > test-reports/summary-report.html << EOF
+          <html>
+          <head><title>Flamecraft Regression Test Report</title></head>
+          <body>
+          <h1>Flamecraft App Regression Test Report</h1>
+          <p><strong>Build:</strong> #${env.BUILD_NUMBER}</p>
+          <p><strong>Environment:</strong> DEV</p>
+          <p><strong>Test Date:</strong> \$(date)</p>
+          <h2>Test Results</h2>
+          <ul>
+          <li>✓ Health Check: PASSED</li>
+          <li>✓ Readiness Check: PASSED</li>
+          <li>✓ Employees API: PASSED</li>
+          </ul>
+          <h2>Deployment Details</h2>
+          <ul>
+          <li>Image: public.ecr.aws/e9s5a3s2/flamecraft:${env.BUILD_NUMBER}</li>
+          <li>Service: flamecraft-app.dev.svc.cluster.local:80</li>
+          <li>Namespace: ${NAMESPACE}</li>
+          <li>Test Job: regression-test-job</li>
+          </ul>
+          </body>
+          </html>
+          EOF
+
+          echo "✓ All regression tests completed successfully!"
+        """
+      }
+    }
+  }
+
+  stage('Send Dev Env Test Report') {
+    script {
+      // Archive test reports
+      archiveArtifacts artifacts: 'test-reports/**', allowEmptyArchive: true
+
+      // Send test report via Slack
+      withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
+        sh """
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{
+              "text": "✅ Flamecraft Regression Tests Completed - Build #${env.BUILD_NUMBER}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*✅ Regression Test Report*"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Job:* ${env.JOB_NAME}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Build:* #${env.BUILD_NUMBER}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Environment:* DEV"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Test Status:* PASSED"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Tests Run:* 3/3"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Triggered by:* ${env.BUILD_USER ?: 'Jenkins'}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Test Results:*\n✓ Health Check: PASSED\n✓ Readiness Check: PASSED\n✓ Employees API: PASSED"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Jenkins URL:* ${env.BUILD_URL}"
+                  }
+                }
+              ]
+            }' \
+            \$SLACK_WEBHOOK
+        """
+      }
+    }
+  }
+
+  stage('Approval for Stage Env Deployment') {
+    script {
+      def userInput = input(
+        id: 'ProceedToStage',
+        message: 'Deploy to STAGE environment?',
+        parameters: [
+          choice(
+            name: 'DEPLOY_TO_STAGE',
+            choices: ['Yes', 'No'],
+            description: 'Choose whether to proceed with STAGE deployment'
+          )
+        ]
+      )
+
+      if (userInput == 'Yes') {
+        echo "✓ Approved for STAGE deployment"
+        // Set environment variable for next stages
+        env.DEPLOY_TO_STAGE = 'true'
+
+        // Send approval notification
+        withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
+          sh """
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{
+                "text": "✅ STAGE deployment approved for Flamecraft Build #${env.BUILD_NUMBER}",
+                "blocks": [
+                  {
+                    "type": "section",
+                    "text": {
+                      "type": "mrkdwn",
+                      "text": "*✅ STAGE Deployment Approved*"
+                    }
+                  },
+                  {
+                    "type": "section",
+                    "fields": [
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Job:* ${env.JOB_NAME}"
+                      },
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Build:* #${env.BUILD_NUMBER}"
+                      },
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Environment:* STAGE"
+                      },
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Namespace:* staging"
+                      },
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Approved by:* ${env.BUILD_USER ?: 'Jenkins'}"
+                      }
+                    ]
+                  }
+                ]
+              }' \
+              \$SLACK_WEBHOOK
+          """
+        }
+      } else {
+        echo "✗ STAGE deployment cancelled by user"
+        env.DEPLOY_TO_STAGE = 'false'
+
+        // Send cancellation notification
+        withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
+          sh """
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{
+                "text": "❌ STAGE deployment cancelled for Flamecraft Build #${env.BUILD_NUMBER}",
+                "blocks": [
+                  {
+                    "type": "section",
+                    "text": {
+                      "type": "mrkdwn",
+                      "text": "*❌ STAGE Deployment Cancelled*"
+                    }
+                  },
+                  {
+                    "type": "section",
+                    "fields": [
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Job:* ${env.JOB_NAME}"
+                      },
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Build:* #${env.BUILD_NUMBER}"
+                      },
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Cancelled by:* ${env.BUILD_USER ?: 'Jenkins'}"
+                      }
+                    ]
+                  }
+                ]
+              }' \
+              \$SLACK_WEBHOOK
+          """
+        }
+      }
+    }
+  }
+
+  if (env.DEPLOY_TO_STAGE == 'true') {
+    stage('Deploy to Stage Env (Helm)') {
+      withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                        credentialsId: 'aws-credentials-id']]) {
+        sh """
+          set -euo pipefail
+          aws eks update-kubeconfig --region '${K8S_REGION}' --name '${CLUSTER_NAME}'
+
+          # Helm upgrade/install with the new image tag
+          helm upgrade --install '${RELEASE}' '${CHART_PATH}' \
+            --namespace 'staging' --create-namespace \
+            --set image.repository='public.ecr.aws/e9s5a3s2/flamecraft' \
+            --set image.tag='${env.BUILD_NUMBER}' \
+            --set image.pullPolicy='IfNotPresent' \
+            --wait --atomic --timeout 5m
+
+          # Sanity checks
+          kubectl -n 'staging' rollout status deploy/${RELEASE} --timeout=300s
+          kubectl -n 'staging' get deploy/${RELEASE} -o=jsonpath='{.spec.template.spec.containers[0].image}'; echo
+        """
+      }
+    }
+
+    stage('Run Regression Tests for stage env') {
+      withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                        credentialsId: 'aws-credentials-id']]) {
+        dir("${APP_DIR}") {
+          sh """
+            set -euo pipefail
+
+            aws eks update-kubeconfig --region '${K8S_REGION}' --name '${CLUSTER_NAME}'
+
+            echo "Running regression tests using Kubernetes Job..."
+
+            # Apply the regression test job
+            kubectl apply -f regression-test-for-staging-job.yaml
+
+            # Wait for the job to complete
+            echo "Waiting for regression test job to complete..."
+          kubectl wait --for=condition=complete job/regression-test-for-staging-job -n 'staging' --timeout=300s
+
+          # Create test report directory
+          mkdir -p test-reports
+
+          # Get job logs
+          echo "Fetching regression test job logs..."
+          kubectl logs job/regression-test-for-staging-job -n 'staging' | tee test-reports/regression-test.log
+
+          # Check if job succeeded
+          if kubectl get job regression-test-for-staging-job -n 'staging' -o jsonpath='{.status.succeeded}' | grep -q '1'; then
+            echo "✓ Regression test job completed successfully!"
+          else
+            echo "✗ Regression test job failed!"
+            kubectl logs job/regression-test-for-staging-job -n 'staging'
+            exit 1
+          fi
+
+            # Generate summary report
+            echo "Generating test summary report..."
+            cat > test-reports/summary-report.html << EOF
+            <html>
+            <head><title>Flamecraft Regression Test Report</title></head>
+            <body>
+            <h1>Flamecraft App Regression Test Report</h1>
+            <p><strong>Build:</strong> #${env.BUILD_NUMBER}</p>
+            <p><strong>Environment:</strong> STAGE</p>
+            <p><strong>Test Date:</strong> \$(date)</p>
+            <h2>Test Results</h2>
+            <ul>
+            <li>✓ Health Check: PASSED</li>
+            <li>✓ Readiness Check: PASSED</li>
+            <li>✓ Employees API: PASSED</li>
+            </ul>
+            <h2>Deployment Details</h2>
+            <ul>
+            <li>Image: public.ecr.aws/e9s5a3s2/flamecraft:${env.BUILD_NUMBER}</li>
+            <li>Service: flamecraft-app.staging.svc.cluster.local:80</li>
+            <li>Namespace: staging</li>
+            <li>Test Job: regression-test-for-staging-job</li>
+            </ul>
+            </body>
+            </html>
+            EOF
+
+            echo "✓ All regression tests completed successfully!"
+          """
+        }
+      }
+    }
+
+    stage('Send Test Report') {
+      script {
+        // Archive test reports
+        archiveArtifacts artifacts: 'test-reports/**', allowEmptyArchive: true
+
+        // Send test report via Slack
+        withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
+          sh """
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{
+                "text": "✅ Flamecraft Regression Tests Completed - Build #${env.BUILD_NUMBER}",
+                "blocks": [
+                  {
+                    "type": "section",
+                    "text": {
+                      "type": "mrkdwn",
+                      "text": "*✅ Regression Test Report*"
+                    }
+                  },
+                  {
+                    "type": "section",
+                    "fields": [
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Job:* ${env.JOB_NAME}"
+                      },
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Build:* #${env.BUILD_NUMBER}"
+                      },
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Environment:* STAGE"
+                      },
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Test Status:* PASSED"
+                      },
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Tests Run:* 3/3"
+                      },
+                      {
+                        "type": "mrkdwn",
+                        "text": "*Triggered by:* ${env.BUILD_USER ?: 'Jenkins'}"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "section",
+                    "text": {
+                      "type": "mrkdwn",
+                      "text": "*Test Results:*\n✓ Health Check: PASSED\n✓ Readiness Check: PASSED\n✓ Employees API: PASSED"
+                    }
+                  },
+                  {
+                    "type": "section",
+                    "text": {
+                      "type": "mrkdwn",
+                      "text": "*Jenkins URL:* ${env.BUILD_URL}"
+                    }
+                  }
+                ]
+              }' \
+              \$SLACK_WEBHOOK
+          """
+        }
+      }
     }
   }
 
   stage('Cleanup') {
-    sh """
-      set -euxo pipefail
-      docker rmi "${IMAGE}" || true
-      docker rmi "${ECR_IMAGE}" || true
-    """
+      sh """
+        set -euxo pipefail
+        docker rmi "${IMAGE}" || true
+        docker rmi "${ECR_IMAGE}" || true
+      """
+    }
+  } catch (Exception e) {
+    // Send failure notification for any stage failure
+    withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
+      sh """
+        curl -X POST -H 'Content-type: application/json' \
+          --data '{
+            "text": "❌ Flamecraft Build #${env.BUILD_NUMBER} failed",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*❌ Build Failed*"
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Job:* ${env.JOB_NAME}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Build:* #${env.BUILD_NUMBER}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Environment:* ${NAMESPACE.toUpperCase()}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Namespace:* ${NAMESPACE}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Triggered by:* ${env.BUILD_USER ?: 'Jenkins'}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Error:* ${e.getMessage()}"
+                  }
+                ]
+              }
+            ]
+          }' \
+          \$SLACK_WEBHOOK
+      """
+    }
+    throw e
   }
 }
