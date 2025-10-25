@@ -6,12 +6,12 @@ terraform {
 data "terraform_remote_state" "network" {
   backend = "s3"
   config = {
-    bucket         = "terraform-backend-venkata"
-    key            = "dev/network/terraform.tfstate"
-    region         = "ap-south-1"
-    encrypt        = true
-    kms_key_id     = "alias/terraform-backend"
-    use_lockfile   = true
+    bucket       = "terraform-backend-venkata"
+    key          = "dev/network/terraform.tfstate"
+    region       = "ap-south-1"
+    encrypt      = true
+    kms_key_id   = "alias/terraform-backend"
+    use_lockfile = true
   }
 }
 
@@ -39,7 +39,7 @@ module "api_gateway" {
   http_method      = var.http_method
   stage_name       = var.environment
 
-  lambda_invoke_arn   = module.lambda.lambda_function_arn
+  lambda_invoke_arn    = module.lambda.lambda_function_arn
   lambda_function_name = module.lambda.lambda_function_name
 
   tags = var.tags

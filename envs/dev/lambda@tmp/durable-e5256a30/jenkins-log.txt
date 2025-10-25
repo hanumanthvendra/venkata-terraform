@@ -1,0 +1,8 @@
++ set -euxo pipefail
++ terraform fmt -recursive
+main.tf
+++ git status --porcelain -- '*.tf' '*.tfvars'
++ '[' -n ' M envs/dev/lambda/main.tf' ']'
++ git config user.email ci@your-org
++ git config user.name 'Jenkins CI'
++ git add -A
