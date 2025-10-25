@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: flamecraft-regression-test
+  namespace: dev
+spec:
+  template:
+    spec:
+      containers:
+      - name: test-runner
+        image: flamecraft:test  # Use the test image built from Dockerfile.test
+        env:
+        - name: FLAMECRAFT_SERVICE_URL
+          value: "http://flamecraft-app.dev.svc.cluster.local:5500"
+        command: ["pytest", "test_regression.py", "-v", "--tb=short", "--junitxml=test-results.xml"]
+        volumeMounts:
+        - name: test-results
+          mountPath: /app/test-results
+      volumes:
+      - name: test-results
+        emptyDir: {}
+      restartPolicy: Never
+  backoffLimit: 1

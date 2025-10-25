@@ -6,3 +6,5 @@ Jinja2==3.1.4
 click==8.1.7
 gunicorn==23.0.0
 prometheus-flask-exporter==0.23.0
+pytest==7.4.0
+requests==2.31.0

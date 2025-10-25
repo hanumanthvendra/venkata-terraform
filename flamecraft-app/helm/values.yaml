@@ -74,7 +74,7 @@ imagePullSecrets:
 
 env:
   - name: FLASK_ENV
-    value: production
+    value: development
   - name: TMPDIR
     value: /tmp
 

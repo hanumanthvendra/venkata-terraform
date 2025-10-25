@@ -1,0 +1,15 @@
+# Test Dockerfile for running regression tests
+FROM public.ecr.aws/docker/library/python:3.9-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY app.py .
+COPY test_regression.py .
+
+# Run tests
+CMD ["pytest", "test_regression.py", "-v", "--tb=short"]
