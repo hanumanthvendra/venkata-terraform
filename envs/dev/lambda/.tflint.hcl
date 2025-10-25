@@ -1,7 +1,8 @@
 config {
-  module = true
-  force = false
-  disabled_by_default = false
+  # v0.54+ replacement for `module = true`
+  call_module_type     = "all"   # valid values: "all", "callable", "none"
+  force                = false
+  disabled_by_default  = false
 }
 
 plugin "aws" {

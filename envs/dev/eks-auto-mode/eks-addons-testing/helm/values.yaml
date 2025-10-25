@@ -1,0 +1,39 @@
+replicaCount: 1
+
+image:
+  repository: public.ecr.aws/i6m7c7y9/demo  # Replace with your ECR/DockerHub repo if pushing image
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: ac51886d48b5b4e1591a74d670b32fc9-846705458.us-east-1.elb.amazonaws.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources: {}
+
+namespace: nginx-hello-friend
+
+serviceAccount:
+  create: true
+  name: ""
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 2
+  targetCPUUtilizationPercentage: 80
+
