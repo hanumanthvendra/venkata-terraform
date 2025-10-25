@@ -168,3 +168,146 @@ After deployment, test the endpoints:
 - API Gateway: Pay per request
 - CloudFront: Pay per request and data transfer
 - CloudWatch Logs: Pay per GB stored
+
+## Configuration Files
+
+### TFLint Configuration (.tflint.hcl)
+TFLint is a Terraform linter that helps identify potential issues in Terraform code. The configuration file includes:
+
+- **Plugin**: AWS ruleset (version 0.21.2) for AWS-specific best practices
+- **Disabled Rules**:
+  - `aws_instance_invalid_type`: Disabled to allow custom instance types
+  - `aws_db_instance_invalid_type`: Disabled for flexibility in database instance selection
+- **Module Type**: Set to "all" to check all module types
+- **Force**: Disabled to allow warnings without failing builds
+
+### Policy-as-Code (policy/terraform.rego)
+This Open Policy Agent (OPA) policy file enforces security and compliance rules on Terraform plans. Key policies include:
+
+- **Security Group Rules**: Blocks 0.0.0.0/0 ingress except on allowed ports (80, 443)
+- **Encryption**: Requires server-side encryption for S3 buckets, encryption for EBS volumes, and storage encryption for RDS instances
+- **Load Balancer Security**: Enforces WAF enablement for Application Load Balancers
+- **S3 Public Access**: Blocks public ACLs and requires Block Public Access settings
+- **Resource Tagging**: Mandates required tags (Owner, CostCenter, Environment)
+- **TLS Policies**: Enforces minimum TLS 1.2 policies for ALB listeners
+
+### Gitleaks SARIF Report (gitleaks.sarif)
+Gitleaks is a secret scanning tool that detects exposed credentials and sensitive information. The SARIF (Static Analysis Results Interchange Format) report contains:
+
+- **Tool Information**: Gitleaks v8.0.0 with comprehensive rule set
+- **Rules**: Over 200 predefined rules covering various secret types (API keys, tokens, certificates, etc.)
+- **Results**: Empty results array indicates no secrets were detected in the current scan
+- **Supported Secrets**: AWS credentials, GitHub tokens, database passwords, private keys, and many more
+
+## CI/CD Pipeline (Jenkins)
+
+This project uses Jenkins for continuous integration and deployment. The pipeline is defined in `Jenkinsfile.groovy` and includes the following stages:
+
+### 1. Clean Workspace
+- **Purpose**: Ensures a clean environment for each build by deleting any existing files from previous runs.
+- **Actions**: Removes all files and directories in the workspace.
+
+### 2. Clone Repo
+- **Purpose**: Retrieves the latest code from the Git repository.
+- **Actions**:
+  - Uses SSH agent for authentication.
+  - Sets up SSH keys and known hosts.
+  - Clones the repository from GitHub using the specified branch (main).
+
+### 3. Parallel Security Scans
+- **Purpose**: Performs security checks on the codebase to identify vulnerabilities and secrets.
+- **Parallel Stages**:
+  - **Secret Scan (Gitleaks)**: Scans for exposed secrets using Gitleaks tool in a Docker container. Outputs results to `gitleaks.sarif`.
+  - **Secret Scan (Trivy Repo)**: Scans the repository for secrets using Trivy. Fails the build if secrets are found.
+
+### 4. Terraform Format
+- **Purpose**: Ensures Terraform code is properly formatted.
+- **Actions**:
+  - Runs `terraform fmt -recursive` to format all `.tf` and `.tfvars` files.
+  - If changes are detected, commits and pushes them back to the repository with a "ci: terraform fmt" message.
+
+### 5. Parallel Lint & Validate
+- **Purpose**: Lints and validates Terraform code for best practices and security issues.
+- **Parallel Stages**:
+  - **TFLint**: Lints Terraform code using TFLint (pinned to v0.53.0). Initializes and runs recursively.
+  - **TFsec**: Scans for security issues in Terraform code using TFsec. Outputs results to `tfsec-results.xml`.
+  - **Checkov**: Scans for misconfigurations and security issues using Checkov. Includes extra volume mount for modules to avoid load warnings. Outputs to `checkov-results.xml`.
+
+### 6. Terraform Validate
+- **Purpose**: Validates the Terraform configuration syntax and consistency.
+- **Actions**:
+  - Initializes Terraform with backend configuration.
+  - Runs `terraform validate` to check for errors.
+
+### 7. Terraform Plan
+- **Purpose**: Generates an execution plan showing what changes Terraform will make.
+- **Actions**:
+  - Runs `terraform plan` and saves the plan to `tfplan.binary`.
+  - Converts the plan to JSON format (`tfplan.json`) for further processing.
+
+### 8. Policy-as-Code on Plan (Conftest)
+- **Purpose**: Applies policy checks against the Terraform plan using Open Policy Agent (OPA).
+- **Actions**:
+  - If a `policy/` directory and `tfplan.json` exist, runs Conftest to validate the plan against defined policies.
+  - Outputs results to `conftest-results.xml`.
+
+### 9. Infracost (Optional)
+- **Purpose**: Estimates the monthly cost of infrastructure changes.
+- **Actions**:
+  - Uses Infracost to analyze the Terraform plan and generate a cost breakdown in JSON format (`infracost.json`).
+
+### 10. Approval for Apply
+- **Purpose**: Requires manual approval before applying changes to production.
+- **Actions**:
+  - Prompts the user to choose "Yes" or "No" for applying the Terraform plan.
+  - Sets environment variable `APPLY_CHANGES` based on the response.
+
+### 11. Terraform Apply (Conditional)
+- **Purpose**: Applies the Terraform plan to create, update, or destroy infrastructure.
+- **Actions** (only if approved):
+  - Runs `terraform apply tfplan.binary` to execute the changes.
+
+### 12. Post-Apply Tests (Optional)
+- **Purpose**: Runs additional tests after infrastructure changes.
+- **Actions**: Placeholder for unit tests, integration tests, or other validations (e.g., Kitchen-Terraform, Terratest).
+
+### 13. Generate Docs & Graph
+- **Purpose**: Generates documentation and visual representations of the infrastructure.
+- **Actions**:
+  - Creates a dependency graph using `terraform graph` piped to Graphviz container (`graphviz/graphviz:stable`).
+  - Generates README documentation using `terraform-docs`.
+
+### 14. SBOM & License Scan
+- **Purpose**: Creates a Software Bill of Materials and scans for licenses.
+- **Actions**:
+  - Generates SBOM using Syft (`anchore/syft`) in SPDX JSON format.
+  - Scans for licenses and vulnerabilities using Trivy.
+
+### 15. Cleanup
+- **Purpose**: Cleans up temporary files and resources.
+- **Actions**: Removes any temporary files generated during the build.
+
+### Exception Handling
+- **Purpose**: Handles build failures and sends notifications.
+- **Actions**:
+  - On failure, sends a Slack notification with build details and error message.
+
+### Configuration
+- **Node**: `ec2-fleet`
+- **Terraform Version**: 1.5.7
+- **AWS Region**: ap-south-1
+- **Environment**: dev
+- **Workspace Directory**: envs/dev/lambda
+
+### Artifacts
+The pipeline archives the following artifacts:
+- `gitleaks.sarif`
+- `tfsec-results.xml`
+- `checkov-results.xml`
+- `tfplan.json`
+- `conftest-results.xml`
+- `infracost.json`
+- `graph.png`
+- `README.md` (generated)
+- `sbom.json`
+- `trivy-results.json`
